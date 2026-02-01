@@ -331,6 +331,10 @@
 
               for (let i = 0; i < shipx.length; i++) {
                 if (currentmap[shipy[i]][shipx[i]] === 2) {
+                  // Mark this hit as belonging to a destroyed boat (value 3)
+                  currentmap[shipy[i]][shipx[i]] = 3;
+                  
+                  // Mark surrounding cells as misses for separation rule
                   if (shipy[i] - 1 >= 0 && currentmap[shipy[i] - 1][shipx[i]] === 0) {
                     currentmap[shipy[i] - 1][shipx[i]] = 1;
                   }
@@ -398,6 +402,12 @@
   // Events
   aspectEl.addEventListener('change', handleAspectChange);
   buildBtn.addEventListener('click', buildGrid);
+  if (strategyEl) {
+    strategyEl.addEventListener('change', function () {
+      // Regenerate heatmap when strategy changes
+      updateHeatmap(currentMode, lasthit ? lasthit.r : 0, lasthit ? lasthit.c : 0);
+    });
+  }
   addValueBtn.addEventListener('click', function () {
     const v = parseAnyInt(valueInput.value);
     if (v === null) {

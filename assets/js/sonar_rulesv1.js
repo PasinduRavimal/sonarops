@@ -9,25 +9,41 @@
     if (strategy === 0)
       return generateHeatmapWithRules(rows, cols, boats, overrides, mode, x, y);
     if (strategy === 1)
-      return generateHeatmapsWithSimulation(rows, cols, boats, overrides);
+      return generateHeatmapWithSimulation(rows, cols, boats, overrides, mode, x, y);
+    if (strategy === 2)
+      return generateHeatmapWithPDF(rows, cols, boats, overrides, mode, x, y);
   }
 
-  function generateHeatmapsWithSimulation(rows, cols, boats, overrides) {
-    // Enumerate candidate placements per boat and sample valid configurations.
-    const MAX_SAMPLES = Math.min(8000, 1200 + rows * cols * 4);
+  function generateHeatmapWithSimulation(rows, cols, boats, overrides, mode, x, y) {
+    // Monte Carlo simulation: sample random valid board configurations
+    // overrides is a 2D array: 0=unknown, 1=miss, 2=hit
+    const MAX_SAMPLES = Math.min(10000, 1500 + rows * cols * 5);
     const counts = Array.from({ length: rows }, () => Array(cols).fill(0));
-    const zeros = new Set();
-    const ones = new Set();
-    if (overrides && typeof overrides === 'object') {
-      for (const key in overrides) {
-        if (!Object.prototype.hasOwnProperty.call(overrides, key)) continue;
-        const val = overrides[key];
-        const parts = key.split(',');
-        const r = parseInt(parts[0], 10);
-        const c = parseInt(parts[1], 10);
-        if (Number.isInteger(r) && Number.isInteger(c)) {
-          if (val === 0) zeros.add(key);
-          else if (val === 1) ones.add(key);
+    
+    // Fisher-Yates shuffle to randomize candidate order
+    function shuffle(array) {
+      const arr = array.slice();
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+    
+    // Collect misses and hits from overrides
+    // 0 = unknown, 1 = miss, 2 = active hit (needs coverage), 3 = destroyed boat hit (ignore)
+    const misses = new Set();
+    const hits = new Set();
+    
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const key = `${r},${c}`;
+        if (overrides[r][c] === 1 || overrides[r][c] === 3) {
+          // Treat both misses and destroyed boat hits as unavailable
+          misses.add(key);
+        } else if (overrides[r][c] === 2) {
+          // Only active hits need to be covered
+          hits.add(key);
         }
       }
     }
@@ -38,9 +54,12 @@
         const cc = vertical ? c : c + k;
         if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) return false;
         const key = `${rr},${cc}`;
-        if (zeros.has(key)) return false;
-        if (board[rr][cc] === 1) return false; // occupied
-        // separation: ensure neighbors are empty
+        // Cannot place on misses
+        if (misses.has(key)) return false;
+        // Cannot place if cell already occupied by another boat
+        if (board[rr][cc] === 1) return false;
+        
+        // Separation rule: ensure all 8 neighbors are empty
         const neigh = [
           [rr - 1, cc], [rr + 1, cc], [rr, cc - 1], [rr, cc + 1],
           [rr - 1, cc - 1], [rr - 1, cc + 1], [rr + 1, cc - 1], [rr + 1, cc + 1]
@@ -62,49 +81,70 @@
       }
     }
 
-    // Build candidate placement lists for each boat instance
+    function unplace(board, r, c, len, vertical) {
+      for (let k = 0; k < len; k++) {
+        const rr = vertical ? r + k : r;
+        const cc = vertical ? c : c + k;
+        board[rr][cc] = 0;
+      }
+    }
+
+    // Build candidate placement lists for each boat
     const boatPlacements = boats.map((len) => {
       const candidates = [];
-      // Horizontal
+      // Horizontal placements
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c + len - 1 < cols; c++) {
-          // quick zero check
-          let ok = true;
+          // Quick check: no misses in this span
+          let valid = true;
           for (let k = 0; k < len; k++) {
-            if (zeros.has(`${r},${c + k}`)) { ok = false; break; }
+            if (misses.has(`${r},${c + k}`)) {
+              valid = false;
+              break;
+            }
           }
-          if (!ok) continue;
-          candidates.push({ r, c, len, vertical: false });
+          if (valid) candidates.push({ r, c, len, vertical: false });
         }
       }
-      // Vertical
+      // Vertical placements
       for (let c = 0; c < cols; c++) {
         for (let r = 0; r + len - 1 < rows; r++) {
-          let ok = true;
+          let valid = true;
           for (let k = 0; k < len; k++) {
-            if (zeros.has(`${r + k},${c}`)) { ok = false; break; }
+            if (misses.has(`${r + k},${c}`)) {
+              valid = false;
+              break;
+            }
           }
-          if (!ok) continue;
-          candidates.push({ r, c, len, vertical: true });
+          if (valid) candidates.push({ r, c, len, vertical: true });
         }
       }
       return candidates;
     });
 
-    // Order boats by fewest candidates to prune early
+    // Debug: log candidate counts
+    console.log('Monte Carlo candidate counts:', boatPlacements.map((cands, i) => `Boat ${boats[i]}: ${cands.length} candidates`).join(', '));
+
+    // Order boats by fewest candidates first (constraint propagation)
     const order = boats.map((len, i) => i)
       .sort((a, b) => boatPlacements[a].length - boatPlacements[b].length);
 
     let samples = 0;
+    let attempts = 0;
+    const MAX_ATTEMPTS = MAX_SAMPLES * 50; // Prevent infinite loop
+
     function backtrack(idx, board) {
-      if (samples >= MAX_SAMPLES) return;
+      if (attempts >= MAX_ATTEMPTS || samples >= MAX_SAMPLES) return;
+      attempts++;
+      
       if (idx === order.length) {
-        // verify ones coverage
-        for (const key of ones) {
+        // Verify all hits are covered by boats
+        for (const key of hits) {
           const [r, c] = key.split(',').map((x) => parseInt(x, 10));
-          if (board[r][c] !== 1) return; // reject
+          if (board[r][c] !== 1) return; // reject: hit not covered
         }
-        // accumulate
+        
+        // Valid configuration! Accumulate counts
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             if (board[r][c] === 1) counts[r][c] += 1;
@@ -113,38 +153,41 @@
         samples++;
         return;
       }
+      
       const i = order[idx];
-      // bias candidates if there are known ones
       let candidates = boatPlacements[i];
-      if (ones.size > 0) {
+      
+      // In target mode (mode 1 or 3), prioritize placements near the hit point
+      if ((mode === 1 || mode === 3) && hits.size > 0) {
         candidates = candidates.slice().sort((A, B) => {
-          function dist(a) {
-            let best = Infinity;
-            for (const key of ones) {
-              const [pr, pc] = key.split(',').map(v => parseInt(v, 10));
-              for (let k = 0; k < a.len; k++) {
-                const rr = a.vertical ? a.r + k : a.r;
-                const cc = a.vertical ? a.c : a.c + k;
-                const d = Math.abs(rr - pr) + Math.abs(cc - pc);
-                if (d < best) best = d;
+          function minDistToHits(placement) {
+            let minDist = Infinity;
+            for (const key of hits) {
+              const [hr, hc] = key.split(',').map(v => parseInt(v, 10));
+              for (let k = 0; k < placement.len; k++) {
+                const rr = placement.vertical ? placement.r + k : placement.r;
+                const cc = placement.vertical ? placement.c : placement.c + k;
+                const dist = Math.abs(rr - hr) + Math.abs(cc - hc);
+                if (dist < minDist) minDist = dist;
               }
             }
-            return best;
+            return minDist;
           }
-          return dist(A) - dist(B);
+          return minDistToHits(A) - minDistToHits(B);
         });
+      } else {
+        // In search mode, randomize to avoid top-left bias
+        candidates = shuffle(candidates);
       }
+      
+      // Try placing this boat in valid positions
       for (const cand of candidates) {
         if (!canPlace(board, cand.r, cand.c, cand.len, cand.vertical)) continue;
-        // place
+        
         place(board, cand.r, cand.c, cand.len, cand.vertical);
         backtrack(idx + 1, board);
-        // unplace
-        for (let k = 0; k < cand.len; k++) {
-          const rr = cand.vertical ? cand.r + k : cand.r;
-          const cc = cand.vertical ? cand.c : cand.c + k;
-          board[rr][cc] = 0;
-        }
+        unplace(board, cand.r, cand.c, cand.len, cand.vertical);
+        
         if (samples >= MAX_SAMPLES) break;
       }
     }
@@ -152,19 +195,171 @@
     const emptyBoard = Array.from({ length: rows }, () => Array(cols).fill(0));
     backtrack(0, emptyBoard);
 
-    // Normalize counts to [0,1] with light Laplace smoothing to avoid collapse
+    // Debug: log sample count
+    if (samples === 0) {
+      console.warn(`Monte Carlo: No valid configurations found. Attempts: ${attempts}, Max samples: ${MAX_SAMPLES}`);
+      console.log('Boats:', boats, 'Hits:', hits.size, 'Misses:', misses.size);
+    } else {
+      console.log(`Monte Carlo: Found ${samples} valid configurations in ${attempts} attempts`);
+    }
+
+    // Normalize counts to [0,1] with Laplace smoothing
     let maxCount = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (counts[r][c] > maxCount) maxCount = counts[r][c];
       }
     }
-    const alpha = 1; // smoothing
-    const denom = (maxCount > 0 ? maxCount + alpha : 1);
+    
+    // If no samples found, return uniform low probability (except misses which are 0)
+    if (samples === 0 || maxCount === 0) {
+      const probs = Array.from({ length: rows }, () => Array(cols).fill(0.01));
+      // Set misses and destroyed boat hits to 0
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (overrides[r][c] === 1 || overrides[r][c] === 3) probs[r][c] = 0;
+        }
+      }
+      return probs;
+    }
+    
+    const alpha = 0.1; // light smoothing to avoid hard zeros
+    const denom = maxCount + alpha;
     const probs = counts.map((row) => row.map((v) => ((v + alpha) / denom)));
 
-    // Apply hard overrides on top (force 0/1)
-    // Do not hard-force 0/1 here; rendering layer applies overrides so distribution remains informative.
+    return probs;
+  }
+
+  function generateHeatmapWithPDF(rows, cols, boats, overrides, mode, x, y) {
+    // Probability Density Function: For each cell, count how many boats can be placed through it
+    // This is computationally expensive but very accurate for end-game scenarios
+    const counts = Array.from({ length: rows }, () => Array(cols).fill(0));
+    
+    console.log('PDF Strategy: Computing placement density for each cell...');
+    const startTime = performance.now();
+    
+    // Helper: check if a boat placement is valid (doesn't cross misses/destroyed/borders)
+    function isValidPlacement(r, c, len, vertical) {
+      for (let k = 0; k < len; k++) {
+        const rr = vertical ? r + k : r;
+        const cc = vertical ? c : c + k;
+        
+        // Check bounds
+        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) {
+          return false;
+        }
+        
+        // Cannot place on misses (1) or destroyed boat hits (3)
+        if (overrides[rr][cc] === 1 || overrides[rr][cc] === 3) {
+          return false;
+        }
+      }
+      
+      // In target mode, placement must include at least one active hit (2)
+      if ((mode === 1 || mode === 3)) {
+        let includesHit = false;
+        for (let k = 0; k < len; k++) {
+          const rr = vertical ? r + k : r;
+          const cc = vertical ? c : c + k;
+          if (overrides[rr][cc] === 2) {
+            includesHit = true;
+            break;
+          }
+        }
+        // In target mode, if there are hits, prioritize placements that cover them
+        // But don't strictly require it - allow search mode behavior too
+        if (x >= 0 && y >= 0 && x < rows && y < cols) {
+          // Must include the target cell
+          let includesTarget = false;
+          for (let k = 0; k < len; k++) {
+            const rr = vertical ? r + k : r;
+            const cc = vertical ? c : c + k;
+            if (rr === x && cc === y) {
+              includesTarget = true;
+              break;
+            }
+          }
+          if (!includesTarget) return false;
+        }
+      }
+      
+      return true;
+    }
+    
+    // For each boat, try all possible placements
+    boats.forEach((boatLen, boatIdx) => {
+      let placementCount = 0;
+      
+      // Try horizontal placements
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c <= cols - boatLen; c++) {
+          if (isValidPlacement(r, c, boatLen, false)) {
+            placementCount++;
+            // Increment count for all cells this placement covers
+            for (let k = 0; k < boatLen; k++) {
+              counts[r][c + k] += 1;
+            }
+          }
+        }
+      }
+      
+      // Try vertical placements
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r <= rows - boatLen; r++) {
+          if (isValidPlacement(r, c, boatLen, true)) {
+            placementCount++;
+            // Increment count for all cells this placement covers
+            for (let k = 0; k < boatLen; k++) {
+              counts[r + k][c] += 1;
+            }
+          }
+        }
+      }
+      
+      console.log(`  Boat ${boatLen}: ${placementCount} valid placements`);
+    });
+    
+    const endTime = performance.now();
+    console.log(`PDF Strategy completed in ${(endTime - startTime).toFixed(2)}ms`);
+    
+    // Normalize to [0, 1]
+    let maxCount = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (counts[r][c] > maxCount) {
+          maxCount = counts[r][c];
+        }
+      }
+    }
+    
+    if (maxCount === 0) {
+      // No valid placements - return uniform low probability
+      console.warn('PDF Strategy: No valid placements found');
+      const probs = Array.from({ length: rows }, () => Array(cols).fill(0.01));
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (overrides[r][c] === 1 || overrides[r][c] === 3) {
+            probs[r][c] = 0;
+          }
+        }
+      }
+      return probs;
+    }
+    
+    // Normalize with very light smoothing
+    const alpha = 0.01;
+    const denom = maxCount + alpha;
+    const probs = counts.map((row) => row.map((v) => ((v + alpha) / denom)));
+    
+    // Zero out misses and destroyed boat hits
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (overrides[r][c] === 1 || overrides[r][c] === 3) {
+          probs[r][c] = 0;
+        }
+      }
+    }
+    
     return probs;
   }
 
@@ -184,7 +379,7 @@
             let end = c + boat;
             let canPlaceHorizontally = true;
             for (let current = c; current < end; current++) {
-              if (current >= cols || overrides[r][current] === 1) {
+              if (current >= cols || overrides[r][current] === 1 || overrides[r][current] === 2 || overrides[r][current] === 3) {
                 canPlaceHorizontally = false;
               }
             }
@@ -202,7 +397,7 @@
             let end = r + boat;
             let canPlaceVertically = true;
             for (let current = r; current < end; current++) {
-              if (current >= rows || overrides[current][c] === 1) {
+              if (current >= rows || overrides[current][c] === 1 || overrides[current][c] === 2 || overrides[current][c] === 3) {
                 canPlaceVertically = false;
               }
             }
@@ -322,7 +517,7 @@
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (overrides[r][c] === 1) {
+        if (overrides[r][c] === 1 || overrides[r][c] === 3) {
           counts[r][c] = 0;
         }
       }
