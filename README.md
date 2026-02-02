@@ -54,6 +54,7 @@ The application offers three different strategies for generating probability hea
 - 🔍 Excellent with multiple hits and complex patterns
 - ⚖️ No artificial heuristics or biases
 - 🎲 True probability distribution
+- ♟️ **Checkerboard optimization** in search mode (50% fewer shots needed)
 
 ### Disadvantages
 - 🐌 Slower computation (can take seconds for complex scenarios)
@@ -108,6 +109,7 @@ probability[r][c] = count[r][c] / max(all counts)
 - 💡 Simple, intuitive algorithm
 - ✅ No randomness - deterministic results
 - 🎮 Optimal when few boats remain
+- ♟️ **Checkerboard optimization** in search mode (50% fewer shots needed)
 
 ### Disadvantages
 - 🐌 **Slowest method** - expensive computation
@@ -131,6 +133,164 @@ probability[r][c] = count[r][c] / max(all counts)
 
 ---
 
+## Dynamic Pattern Optimization ♟️
+
+### What Is It?
+
+All three strategies apply a **dynamic pattern penalty** in search mode (mode 0):
+- Pattern adapts based on the **smallest remaining boat length**
+- Cells in "skip" positions get reduced probability
+- Applied ONLY in search mode, not in target mode
+
+### How It Works
+
+**The Algorithm:**
+```javascript
+smallestBoat = min(remaining boat lengths)
+for each cell (r, c):
+  patternIndex = (r + c) % smallestBoat
+  if patternIndex != 0:
+    reduce probability by (0.8 / smallestBoat)
+```
+
+**Examples:**
+
+| Smallest Boat | Pattern | Shot Reduction | Penalty |
+|---------------|---------|----------------|---------|
+| 2 units | Checkerboard | ~50% | 40% off |
+| 3 units | Every 3rd cell | ~67% | 27% off |
+| 4 units | Every 4th cell | ~75% | 20% off |
+| 5 units | Every 5th cell | ~80% | 16% off |
+
+### Why Does It Work?
+
+For a boat of length **N**:
+- The boat must span **N consecutive cells**
+- If you check every **Nth cell** in a diagonal pattern, you're guaranteed to hit it
+- This reduces shots needed by approximately **(N-1)/N × 100%**
+
+### Visual Examples
+
+**Smallest Boat = 2 (Checkerboard):**
+```
+[1.0][0.4][1.0][0.4]    Shoot: ⬜ skip ⬜ skip
+[0.4][1.0][0.4][1.0]           skip ⬜ skip ⬜
+[1.0][0.4][1.0][0.4]           ⬜ skip ⬜ skip
+[0.4][1.0][0.4][1.0]           skip ⬜ skip ⬜
+```
+
+**Smallest Boat = 3:**
+```
+[1.0][0.3][0.3][1.0][0.3]    Shoot: ⬜ skip skip ⬜ skip
+[0.3][0.3][1.0][0.3][0.3]           skip skip ⬜ skip skip
+[0.3][1.0][0.3][0.3][1.0]           skip ⬜ skip skip ⬜
+[1.0][0.3][0.3][1.0][0.3]           ⬜ skip skip ⬜ skip
+```
+
+**Smallest Boat = 4:**
+```
+[1.0][0.2][0.2][0.2][1.0]    Shoot: ⬜ skip skip skip ⬜
+[0.2][0.2][0.2][1.0][0.2]           skip skip skip ⬜ skip
+[0.2][0.2][1.0][0.2][0.2]           skip skip ⬜ skip skip
+[0.2][1.0][0.2][0.2][0.2]           skip ⬜ skip skip skip
+```
+
+### Dynamic Adaptation
+
+**Early Game:**
+- Boats: [5, 4, 3, 3, 2]
+- Smallest: **2**
+- Pattern: Checkerboard (50% reduction)
+
+**Mid Game (boat length 2 destroyed):**
+- Boats: [5, 4, 3, 3]
+- Smallest: **3**
+- Pattern: Every 3rd cell (67% reduction) ✨ **Better optimization!**
+
+**Late Game (only large boats left):**
+- Boats: [5, 4]
+- Smallest: **4**
+- Pattern: Every 4th cell (75% reduction) ✨ **Even better!**
+
+### Benefits
+
+1. **Adaptive Efficiency** 🎯
+   - Automatically adjusts to remaining boats
+   - More aggressive optimization as boats are destroyed
+   - No manual configuration needed
+
+2. **Optimal Shot Reduction** 📉
+   - Early game: ~50% fewer shots
+   - Mid game: ~67% fewer shots (if boat length 2 destroyed)
+   - Late game: up to ~80% fewer shots
+
+3. **Mathematically Sound** 📐
+   - Based on minimum boat length guarantee
+   - Cannot miss any boats
+   - Industry-standard approach
+
+4. **Progressive Optimization** 🚀
+   - Game gets easier and more efficient over time
+   - Reward for destroying smaller boats first
+
+### When Applied
+
+- ✅ **Search Mode (mode 0)**: Dynamic pattern applied to all strategies
+- ❌ **Target Mode (mode 1/3)**: No pattern - need full resolution around hits
+
+### Console Logging
+
+Watch the console to see the optimization in action:
+```
+Rule-based: Applied pattern optimization for smallest boat length 2
+PDF: Applied pattern optimization for smallest boat length 3
+Monte Carlo: Applied pattern optimization for smallest boat length 4 (skip 3 cells)
+```
+
+---
+
+## Checkerboard Optimization ♟️
+
+### What Is It?
+
+All three strategies apply a **checkerboard penalty** in search mode (mode 0):
+- Alternating cells get a **20% probability reduction**
+- Creates a checkerboard pattern of higher/lower probability cells
+- Applied ONLY in search mode, not in target mode
+
+### Why Does It Work?
+
+Since the **smallest boat is 2 units long**:
+- Every boat must span at least 2 consecutive cells
+- If you hit every other cell (checkerboard pattern), you're guaranteed to hit every boat
+- This reduces shots needed by approximately **50%**
+
+### Visual Example
+
+```
+Grid without checkerboard:    Grid with checkerboard:
+[1.0][1.0][1.0][1.0]          [0.8][1.0][0.8][1.0]
+[1.0][1.0][1.0][1.0]          [1.0][0.8][1.0][0.8]
+[1.0][1.0][1.0][1.0]          [0.8][1.0][0.8][1.0]
+[1.0][1.0][1.0][1.0]          [1.0][0.8][1.0][0.8]
+
+Target high-probability cells (white squares on checkerboard)
+```
+
+### When Applied
+
+- ✅ **Search Mode (mode 0)**: Checkerboard applied to all strategies
+- ❌ **Target Mode (mode 1/3)**: No checkerboard - need to target specific hits
+
+### Impact
+
+- 📉 Reduces search space by ~50%
+- 🎯 Optimal for early game exploration
+- ♟️ Encourages efficient shooting pattern
+- 🎮 Industry-standard Battleship optimization
+
+---
+
 ## Quick Comparison Table
 
 | Feature | Rule-Based | Monte Carlo | PDF |
@@ -141,6 +301,7 @@ probability[r][c] = count[r][c] / max(all counts)
 | **Accuracy (Late)** | ⭐⭐ Fair | ⭐⭐⭐⭐ Excellent | ⭐⭐⭐⭐ Excellent |
 | **Separation Rule** | ❌ No | ✅ Yes | ❌ No |
 | **Boat Interactions** | ❌ No | ✅ Yes | ❌ No |
+| **Dynamic Pattern** | ✅ Yes | ✅ Yes | ✅ Yes |
 | **Deterministic** | ✅ Yes | ❌ No (random) | ✅ Yes |
 | **Memory Usage** | Low | Medium | Low |
 

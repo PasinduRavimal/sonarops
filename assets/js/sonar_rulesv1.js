@@ -227,6 +227,33 @@
     const denom = maxCount + alpha;
     const probs = counts.map((row) => row.map((v) => ((v + alpha) / denom)));
 
+    // Apply dynamic pattern optimization in search mode (mode 0)
+    // Pattern is based on smallest remaining boat length
+    if (mode === 0 && boats.length > 0) {
+      const smallestBoat = Math.min(...boats);
+      
+      // For a boat of length N, we can skip N-1 cells in a pattern
+      // Example: length 2 = checkerboard (skip 1), length 3 = every 2nd cell, etc.
+      if (smallestBoat >= 2) {
+        const skipPattern = smallestBoat - 1;
+        
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            // Calculate if this cell is in a "skip" position
+            const patternIndex = (r + c) % smallestBoat;
+            if (patternIndex !== 0) {
+              // Reduce probability for cells in skip positions
+              // Penalty increases with pattern size
+              const penalty = 0.8 / smallestBoat; // More aggressive penalty for larger boats
+              probs[r][c] = Math.floor(probs[r][c] * 100 * penalty) / 100;
+            }
+          }
+        }
+        
+        console.log(`Monte Carlo: Applied pattern optimization for smallest boat length ${smallestBoat} (skip ${skipPattern} cells)`);
+      }
+    }
+
     return probs;
   }
 
@@ -351,6 +378,31 @@
     const denom = maxCount + alpha;
     const probs = counts.map((row) => row.map((v) => ((v + alpha) / denom)));
     
+    // Apply dynamic pattern optimization in search mode (mode 0)
+    // Pattern is based on smallest remaining boat length
+    if (mode === 0 && boats.length > 0) {
+      const smallestBoat = Math.min(...boats);
+      
+      // For a boat of length N, we can skip N-1 cells in a pattern
+      if (smallestBoat >= 2) {
+        const skipPattern = smallestBoat - 1;
+        
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            // Calculate if this cell is in a "skip" position
+            const patternIndex = (r + c) % smallestBoat;
+            if (patternIndex !== 0) {
+              // Reduce probability for cells in skip positions
+              const penalty = 0.8 / smallestBoat;
+              probs[r][c] = Math.floor(probs[r][c] * 100 * penalty) / 100;
+            }
+          }
+        }
+        
+        console.log(`PDF: Applied pattern optimization for smallest boat length ${smallestBoat} (skip ${skipPattern} cells)`);
+      }
+    }
+    
     // Zero out misses and destroyed boat hits
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -408,17 +460,26 @@
             }
           }
         }
-
-        for (let r = 0; r < rows; r++) {
-          let checkerboard = r;
-          for (let c = 0; c < cols; c++) {
-            if (checkerboard % 2 === 0) {
-              counts[r][c] = Math.floor(counts[r][c] * 0.8);
-            }
-            checkerboard++;
-          }
-        }
       });
+
+      // Apply dynamic pattern optimization based on smallest remaining boat
+      // This is done once after counting all boat placements
+      if (boats.length > 0) {
+        const smallestBoat = Math.min(...boats);
+        
+        if (smallestBoat >= 2) {
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const patternIndex = (r + c) % smallestBoat;
+              if (patternIndex !== 0) {
+                const penalty = 0.8 / smallestBoat;
+                counts[r][c] = Math.floor(counts[r][c] * penalty);
+              }
+            }
+          }
+          console.log(`Rule-based: Applied pattern optimization for smallest boat length ${smallestBoat}`);
+        }
+      }
     } else if (mode === 1) {
       updateCountsForPlacement();
     } else if (mode === 3) {
