@@ -378,7 +378,18 @@
           
           if (answer) {
             candidates[0].classList.add('destroyed');
-            currentMode = 0;
+            // Check if there are still active hits on the board
+            let activeHitsExist = false;
+            for (let r = 0; r < rows; r++) {
+              for (let c = 0; c < cols; c++) {
+                if (currentmap[r][c] === 2) {
+                  activeHitsExist = true;
+                  break;
+                }
+              }
+              if (activeHitsExist) break;
+            }
+            currentMode = activeHitsExist ? 1 : 0;
 
             let length = parseAnyInt(candidates[0].firstChild.textContent, 10);
             if (length !== null) { 

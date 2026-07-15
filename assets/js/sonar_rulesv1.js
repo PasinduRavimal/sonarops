@@ -131,69 +131,85 @@
 
     let samples = 0;
     let attempts = 0;
-    const MAX_ATTEMPTS = MAX_SAMPLES * 50; // Prevent infinite loop
+    const MAX_ATTEMPTS = MAX_SAMPLES * 100; // Total recursion limit for safety
 
-    function backtrack(idx, board) {
-      if (attempts >= MAX_ATTEMPTS || samples >= MAX_SAMPLES) return;
-      attempts++;
+    while (samples < MAX_SAMPLES && attempts < MAX_ATTEMPTS) {
+      let foundSample = false;
+      const board = Array.from({ length: rows }, () => Array(cols).fill(0));
       
-      if (idx === order.length) {
-        // Verify all hits are covered by boats
-        for (const key of hits) {
-          const [r, c] = key.split(',').map((x) => parseInt(x, 10));
-          if (board[r][c] !== 1) return; // reject: hit not covered
-        }
+      function backtrack(idx) {
+        if (attempts >= MAX_ATTEMPTS || foundSample) return;
+        attempts++;
         
-        // Valid configuration! Accumulate counts
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (board[r][c] === 1) counts[r][c] += 1;
+        if (idx === order.length) {
+          // Verify all hits are covered by boats
+          for (const key of hits) {
+            const [r, c] = key.split(',').map((x) => parseInt(x, 10));
+            if (board[r][c] !== 1) return; // reject: hit not covered
           }
-        }
-        samples++;
-        return;
-      }
-      
-      const i = order[idx];
-      let candidates = boatPlacements[i];
-      
-      // In target mode (mode 1 or 3), prioritize placements near the hit point
-      if ((mode === 1 || mode === 3) && hits.size > 0) {
-        candidates = candidates.slice().sort((A, B) => {
-          function minDistToHits(placement) {
-            let minDist = Infinity;
-            for (const key of hits) {
-              const [hr, hc] = key.split(',').map(v => parseInt(v, 10));
-              for (let k = 0; k < placement.len; k++) {
-                const rr = placement.vertical ? placement.r + k : placement.r;
-                const cc = placement.vertical ? placement.c : placement.c + k;
-                const dist = Math.abs(rr - hr) + Math.abs(cc - hc);
-                if (dist < minDist) minDist = dist;
-              }
+          
+          // Valid configuration! Accumulate counts
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              if (board[r][c] === 1) counts[r][c] += 1;
             }
-            return minDist;
           }
-          return minDistToHits(A) - minDistToHits(B);
-        });
-      } else {
-        // In search mode, randomize to avoid top-left bias
-        candidates = shuffle(candidates);
+          samples++;
+          foundSample = true;
+          return;
+        }
+        
+        const i = order[idx];
+        let candidates = boatPlacements[i];
+        
+        // Prioritize placements near the hit points if there are any active hits
+        if (hits.size > 0) {
+          candidates = candidates.slice().sort((A, B) => {
+            function minDistToHits(placement) {
+              let minDist = Infinity;
+              for (const key of hits) {
+                const [hr, hc] = key.split(',').map(v => parseInt(v, 10));
+                for (let k = 0; k < placement.len; k++) {
+                  const rr = placement.vertical ? placement.r + k : placement.r;
+                  const cc = placement.vertical ? placement.c : placement.c + k;
+                  const dist = Math.abs(rr - hr) + Math.abs(cc - hc);
+                  if (dist < minDist) minDist = dist;
+                }
+              }
+              return minDist;
+            }
+            const distA = minDistToHits(A);
+            const distB = minDistToHits(B);
+            if (distA === distB) {
+              return Math.random() - 0.5; // Shuffle ties to avoid deterministic clustering bias
+            }
+            return distA - distB;
+          });
+        } else {
+          // In search mode with no hits, randomize to avoid top-left bias
+          candidates = shuffle(candidates);
+        }
+        
+        // Try placing this boat in valid positions
+        for (const cand of candidates) {
+          if (!canPlace(board, cand.r, cand.c, cand.len, cand.vertical)) continue;
+          
+          place(board, cand.r, cand.c, cand.len, cand.vertical);
+          backtrack(idx + 1);
+          unplace(board, cand.r, cand.c, cand.len, cand.vertical);
+          
+          if (foundSample) break;
+        }
       }
       
-      // Try placing this boat in valid positions
-      for (const cand of candidates) {
-        if (!canPlace(board, cand.r, cand.c, cand.len, cand.vertical)) continue;
-        
-        place(board, cand.r, cand.c, cand.len, cand.vertical);
-        backtrack(idx + 1, board);
-        unplace(board, cand.r, cand.c, cand.len, cand.vertical);
-        
-        if (samples >= MAX_SAMPLES) break;
+      backtrack(0);
+      
+      // If backtrack(0) returned without finding a sample and we did not hit the safety limit,
+      // it means the search was exhaustive and there are zero possible valid placements.
+      if (!foundSample && attempts < MAX_ATTEMPTS) {
+        break; // Exhaustive search proved there are no valid configurations
       }
     }
-
-    const emptyBoard = Array.from({ length: rows }, () => Array(cols).fill(0));
-    backtrack(0, emptyBoard);
 
     // Debug: log sample count
     if (samples === 0) {
